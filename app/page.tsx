@@ -1,65 +1,157 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+import QuizQuestion from './components/QuizQuestion';
+import ResultCard from './components/ResultCard';
+
+const questions = [
+  {
+    question: "It's Saturday morning. What are you doing?",
+    options: [
+      { emoji: '🏔️', label: 'Hiking at sunrise', personality: 'boldAdventurer' },
+      { emoji: '🛏️', label: 'Still in bed, no regrets', personality: 'cozyClassic' },
+      { emoji: '🥂', label: 'Brunch with friends', personality: 'socialButterfly' },
+      { emoji: '🍞', label: 'Baking something cozy at home', personality: 'cozyClassic' },
+    ],
+  },
+  {
+    question: 'How do you take risks?',
+    options: [
+      { emoji: '🚀', label: 'I jump in headfirst', personality: 'boldAdventurer' },
+      { emoji: '📚', label: 'I research everything first', personality: 'cozyClassic' },
+      { emoji: '👯', label: 'I ask friends what they think', personality: 'socialButterfly' },
+      { emoji: '🛋️', label: 'I avoid them when possible', personality: 'indulgentTreat' },
+    ],
+  },
+  {
+    question: 'Your ideal work environment?',
+    options: [
+      { emoji: '📢', label: 'Loud, buzzy open office', personality: 'socialButterfly' },
+      { emoji: '🏠', label: 'Home office, total focus', personality: 'cozyClassic' },
+      { emoji: '☕', label: 'Coffee shop background noise', personality: 'boldAdventurer' },
+      { emoji: '🌍', label: 'Wherever I happen to land', personality: 'boldAdventurer' },
+    ],
+  },
+  {
+    question: "What's your relationship with mornings?",
+    options: [
+      { emoji: '⚡', label: 'I own them — up before 6', personality: 'boldAdventurer' },
+      { emoji: '😐', label: 'I tolerate them', personality: 'cozyClassic' },
+      { emoji: '😩', label: 'I actively avoid them', personality: 'indulgentTreat' },
+      { emoji: '⏰', label: 'I need at least 3 alarms', personality: 'socialButterfly' },
+    ],
+  },
+  {
+    question: "Your phone's most-used app?",
+    options: [
+      { emoji: '🗺️', label: "Maps — always going somewhere", personality: 'boldAdventurer' },
+      { emoji: '📝', label: "Notes — I'm a planner", personality: 'cozyClassic' },
+      { emoji: '💬', label: 'Group chats — always connected', personality: 'socialButterfly' },
+      { emoji: '🍕', label: 'Food delivery — treat yourself', personality: 'indulgentTreat' },
+    ],
+  },
+];
+
+const personalities: Record<string, { name: string; emoji: string; coffeeMatch: string; description: string }> = {
+  boldAdventurer: {
+    name: 'The Bold Adventurer',
+    emoji: '🏔️',
+    coffeeMatch: 'Double Espresso',
+    description: "You live life at full throttle. You're first in line, first to try something new, and you don't slow down for anyone. Strong, intense, and always moving — just like your coffee.",
+  },
+  cozyClassic: {
+    name: 'The Cozy Classic',
+    emoji: '🛋️',
+    coffeeMatch: 'Medium Roast with Cream',
+    description: "You know what you love and you love what you know. Reliable, warm, and endlessly comforting — you're the kind of person everyone wants around on a rainy day.",
+  },
+  socialButterfly: {
+    name: 'The Social Butterfly',
+    emoji: '🦋',
+    coffeeMatch: 'Cappuccino',
+    description: "You light up every room you walk into. Life is better shared, and you're always at the center of the fun. Frothy, lively, and impossible to resist.",
+  },
+  indulgentTreat: {
+    name: 'The Indulgent Treat',
+    emoji: '🍫',
+    coffeeMatch: 'Mocha with Extra Whip',
+    description: "Why settle for ordinary when extraordinary exists? You believe life should be savored, not rushed. Rich, layered, and unapologetically delicious.",
+  },
+};
+
+type Scores = Record<string, number>;
 
 export default function Home() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+  const [started, setStarted] = useState(false);
+  const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [scores, setScores] = useState<Scores>({
+    boldAdventurer: 0,
+    cozyClassic: 0,
+    socialButterfly: 0,
+    indulgentTreat: 0,
+  });
+  const [result, setResult] = useState<string | null>(null);
+
+  const handleAnswer = (personality: string) => {
+    const newScores = { ...scores, [personality]: scores[personality] + 1 };
+    setScores(newScores);
+
+    if (currentQuestion < questions.length - 1) {
+      setCurrentQuestion(currentQuestion + 1);
+    } else {
+      const winner = Object.entries(newScores).reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+      setResult(winner);
+    }
+  };
+
+  const handleRetake = () => {
+    setStarted(false);
+    setCurrentQuestion(0);
+    setScores({ boldAdventurer: 0, cozyClassic: 0, socialButterfly: 0, indulgentTreat: 0 });
+    setResult(null);
+  };
+
+  if (!started) {
+    return (
+      <main className="page-container">
+        <div className="landing-card">
+          <div className="landing-emoji">☕</div>
+          <h1 className="landing-title">What Coffee Are You?</h1>
+          <p className="landing-subtitle">
+            Answer 5 quick questions to discover your perfect coffee personality match.
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          <button className="btn-start" onClick={() => setStarted(true)}>
+            Start Quiz
+          </button>
         </div>
       </main>
-    </div>
+    );
+  }
+
+  if (result) {
+    const personality = personalities[result];
+    return (
+      <main className="page-container">
+        <ResultCard
+          name={personality.name}
+          emoji={personality.emoji}
+          coffeeMatch={personality.coffeeMatch}
+          description={personality.description}
+          onRetake={handleRetake}
+        />
+      </main>
+    );
+  }
+
+  return (
+    <main className="page-container">
+      <QuizQuestion
+        questionNumber={currentQuestion + 1}
+        totalQuestions={questions.length}
+        question={questions[currentQuestion].question}
+        options={questions[currentQuestion].options}
+        onAnswer={handleAnswer}
+      />
+    </main>
   );
 }
