@@ -1,0 +1,625 @@
+<meta charset="utf-8">
+<title>TV Box Install Log</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
+<style>
+:root {
+  --ground: #EEF0EC;
+  --panel: #FFFFFF;
+  --panel-2: #F6F7F4;
+  --ink: #17201C;
+  --ink-2: #56615B;
+  --line: #D5DAD3;
+  --accent: #D9601A;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #FBE7DA;
+  --done: #1E7652;
+  --done-soft: #DDF0E6;
+  --flag: #C22E26;
+  --flag-soft: #F9E0DE;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #121614; --panel: #1B211E; --panel-2: #222925; --ink: #ECEFEA; --ink-2: #A3ADA7;
+    --line: #313A35; --accent: #F07A33; --accent-ink: #1A0E06; --accent-soft: #3A2415;
+    --done: #4FC08D; --done-soft: #16301F; --flag: #FF6B61; --flag-soft: #3A1917;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #121614; --panel: #1B211E; --panel-2: #222925; --ink: #ECEFEA; --ink-2: #A3ADA7;
+  --line: #313A35; --accent: #F07A33; --accent-ink: #1A0E06; --accent-soft: #3A2415;
+  --done: #4FC08D; --done-soft: #16301F; --flag: #FF6B61; --flag-soft: #3A1917;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.4; -webkit-tap-highlight-color: transparent; }
+.wrap { max-width: 560px; margin: 0 auto; padding-inline: 16px; padding-block: 12px 96px; display: flex; flex-direction: column; gap: 16px; }
+h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: .01em; text-wrap: balance; }
+h1 { font-size: 30px; line-height: 1.05; }
+h2 { font-size: 24px; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); }
+.muted { color: var(--ink-2); }
+.small { font-size: 14px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.spread { justify-content: space-between; }
+button, .btn { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 14px 16px; min-height: 50px; cursor: pointer; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .5; }
+.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.big { width: 100%; font-size: 19px; min-height: 60px; font-family: var(--display); letter-spacing: .03em; text-transform: uppercase; }
+.ghost { background: transparent; }
+.danger { color: var(--flag); }
+.grow { flex: 1 1 0; }
+input[type=text], textarea { font: inherit; width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+textarea { min-height: 140px; resize: vertical; }
+label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 14px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.banner { border-radius: 10px; padding: 12px 14px; font-size: 14px; background: var(--flag-soft); color: var(--ink); border: 1px solid var(--flag); }
+.topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--ground); padding-block: 8px; display: flex; align-items: center; gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.stat b { display: block; font-family: var(--display); font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+.rooms { display: flex; flex-direction: column; gap: 8px; }
+.roomrow { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; width: 100%; }
+.plate { font-family: var(--display); font-size: 26px; font-weight: 700; min-width: 72px; text-align: center; padding: 4px 8px; border: 2px solid var(--ink); border-radius: 6px; font-variant-numeric: tabular-nums; }
+.mac { font-family: var(--mono); font-size: 14px; letter-spacing: .02em; word-break: break-all; }
+.chip { font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 99px; background: var(--panel-2); color: var(--ink-2); border: 1px solid var(--line); white-space: nowrap; }
+.chip.done { background: var(--done-soft); color: var(--done); border-color: transparent; }
+.chip.flag { background: var(--flag-soft); color: var(--flag); border-color: transparent; }
+.chip.go { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.chips { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.steps { display: flex; flex-direction: column; gap: 12px; }
+.step { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.step.current { border: 2px solid var(--accent); }
+.step.complete .num { background: var(--done); color: #fff; border-color: var(--done); }
+.stephead { display: flex; gap: 12px; align-items: center; }
+.num { width: 34px; height: 34px; flex: none; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-family: var(--display); font-size: 18px; font-weight: 700; }
+.step.current .num { border-color: var(--accent); color: var(--accent); }
+.photo { width: 100%; max-width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: var(--panel-2); display: block; }
+.macbig { font-family: var(--mono); font-weight: 700; font-size: clamp(20px, 6.4vw, 28px); letter-spacing: .02em; background: var(--panel-2); border-radius: 10px; padding: 12px; text-align: center; word-break: break-all; }
+.cands { display: flex; flex-direction: column; gap: 6px; }
+.cand { justify-content: flex-start; text-align: left; font-family: var(--mono); font-size: 14px; min-height: 44px; }
+.cand.sel { border: 2px solid var(--done); background: var(--done-soft); }
+.bottombar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--panel); border-top: 1px solid var(--line); padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); }
+.bottombar .inner { max-width: 560px; margin: 0 auto; display: flex; gap: 10px; }
+.sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 10; display: flex; align-items: flex-end; }
+.sheet { background: var(--panel); width: 100%; max-width: 560px; margin: 0 auto; border-radius: 18px 18px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 12px; max-height: 92%; overflow-y: auto; }
+.toggle { display: flex; gap: 12px; align-items: center; padding: 12px; border-radius: 10px; border: 1px solid var(--line); font-weight: 600; }
+.toggle input { width: 24px; height: 24px; accent-color: var(--flag); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(96px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--ground); padding: 10px 16px; border-radius: 99px; font-weight: 600; z-index: 20; max-width: calc(100% - 32px); text-align: center; }
+.working { display: flex; gap: 10px; align-items: center; color: var(--ink-2); font-weight: 600; }
+.spinner { width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+.empty { text-align: center; padding: 28px 16px; color: var(--ink-2); border: 2px dashed var(--line); border-radius: 14px; }
+.search { margin-top: 4px; }
+</style>
+
+<div id="app" class="wrap"></div>
+<div id="sheet"></div>
+<input type="file" id="cam" accept="image/*" capture="environment" hidden>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ---------- Workflow definition ---------- */
+  const STEPS = [
+    { key: "roomNumber", label: "Room Number", hint: "Photo of the room number sign. This checks you in to the room." },
+    { key: "mac", label: "MAC Address", hint: "Photo of the label on the back of the box. Get the barcode marked MAC: filling most of the picture." },
+    { key: "cable", label: "Cable Management", hint: "Photo showing how the cables are run and tidied." },
+    { key: "overall", label: "Overall Finished", hint: "Wide photo showing the finished install." }
+  ];
+  const PHOTO_NAME = { roomNumber: "Room Number", mac: "MAC Label", cable: "Cable Management", overall: "Overall Finished" };
+
+  /* ---------- Small helpers ---------- */
+  const $ = (s, el = document) => el.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const fmtTime = (t) => t ? new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const stampTime = (t) => { const d = new Date(t); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+  const safeName = (s) => String(s).replace(/[\\/:*?"<>|]+/g, "-").trim();
+  const ls = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+  };
+  let toastTimer;
+  function toast(msg) {
+    document.querySelectorAll(".toast").forEach(t => t.remove());
+    const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), 2600);
+  }
+
+  /* ---------- Storage (IndexedDB on this phone) ---------- */
+  let dbp = null, storageOk = true;
+  const memRooms = new Map(), memPhotos = new Map();
+  function openDB() {
+    if (dbp) return dbp;
+    dbp = new Promise((res) => {
+      try {
+        const r = indexedDB.open("tv-install-log", 1);
+        r.onupgradeneeded = () => { const db = r.result; db.createObjectStore("rooms", { keyPath: "id" }); db.createObjectStore("photos"); };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => { storageOk = false; res(null); };
+      } catch { storageOk = false; res(null); }
+    });
+    return dbp;
+  }
+  async function tx(store, mode, fn) {
+    const db = await openDB();
+    if (!db) return fn(null);
+    return new Promise((res, rej) => {
+      try {
+        const t = db.transaction(store, mode); const s = t.objectStore(store);
+        const req = fn(s);
+        t.oncomplete = () => res(req && "result" in req ? req.result : undefined);
+        t.onerror = () => rej(t.error);
+      } catch (e) { storageOk = false; res(fn(null)); }
+    });
+  }
+  const store = {
+    async allRooms() { const r = await tx("rooms", "readonly", s => s ? s.getAll() : null); return r || [...memRooms.values()]; },
+    async putRoom(room) { room.updatedAt = Date.now(); memRooms.set(room.id, room); await tx("rooms", "readwrite", s => s && s.put(room)); },
+    async delRoom(id) { memRooms.delete(id); await tx("rooms", "readwrite", s => s && s.delete(id)); for (const k of STEPS) await this.delPhoto(id, k.key); },
+    async getPhoto(id, key) { const r = await tx("photos", "readonly", s => s ? s.get(id + ":" + key) : null); return r || memPhotos.get(id + ":" + key) || null; },
+    async putPhoto(id, key, blob) { memPhotos.set(id + ":" + key, blob); await tx("photos", "readwrite", s => s && s.put(blob, id + ":" + key)); },
+    async delPhoto(id, key) { memPhotos.delete(id + ":" + key); await tx("photos", "readwrite", s => s && s.delete(id + ":" + key)); }
+  };
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
+
+  /* ---------- Camera ---------- */
+  const cam = $("#cam");
+  let camCb = null;
+  cam.addEventListener("change", () => { const f = cam.files && cam.files[0]; cam.value = ""; if (f && camCb) { const cb = camCb; camCb = null; cb(f); } });
+  function takePhoto(cb) { camCb = cb; cam.click(); }
+
+  async function loadBitmap(file) {
+    try { return await createImageBitmap(file, { imageOrientation: "from-image" }); }
+    catch {
+      return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = URL.createObjectURL(file); });
+    }
+  }
+  // Resize and burn a caption strip into the photo so it proves room / step / time / installer.
+  async function processPhoto(src, captionLines, maxSide = 1600) {
+    const bmp = src instanceof Blob ? await loadBitmap(src) : src;
+    const w0 = bmp.width, h0 = bmp.height, k = Math.min(1, maxSide / Math.max(w0, h0));
+    const w = Math.round(w0 * k), h = Math.round(h0 * k);
+    const band = captionLines.length ? Math.round(Math.max(w, h) * 0.018) * (captionLines.length + 1.2) : 0;
+    const c = document.createElement("canvas"); c.width = w; c.height = h + band;
+    const g = c.getContext("2d");
+    g.drawImage(bmp, 0, 0, w, h);
+    if (band) {
+      const fs = Math.round(Math.max(w, h) * 0.018);
+      g.fillStyle = "#111"; g.fillRect(0, h, w, band);
+      g.fillStyle = "#fff"; g.font = `600 ${fs}px Barlow, system-ui, sans-serif`; g.textBaseline = "top";
+      captionLines.forEach((line, i) => g.fillText(line, Math.round(fs * 0.7), h + Math.round(fs * 0.6) + i * fs * 1.05));
+    }
+    return new Promise(res => c.toBlob(res, "image/jpeg", 0.84));
+  }
+  function caption(room, key, t) {
+    const who = ls.get("tvlog.tech", "");
+    return [`Room ${room.number}  |  ${PHOTO_NAME[key]}`, `${stampTime(t)}${who ? "  |  " + who : ""}${key === "mac" && room.mac ? "  |  MAC " + room.mac : ""}`];
+  }
+
+  /* ---------- Barcode reading ---------- */
+  let zxReady = null;
+  function prepZX() {
+    if (zxReady) return zxReady;
+    zxReady = (async () => {
+      if (!window.ZXingWASM) throw new Error("scanner not loaded");
+      let bin = null;
+      try { const r = await fetch("zxing_reader.wasm"); if (r.ok) bin = await r.arrayBuffer(); } catch {}
+      if (bin) await ZXingWASM.prepareZXingModule({ overrides: { wasmBinary: bin }, fireImmediately: true });
+      else await ZXingWASM.prepareZXingModule({ fireImmediately: true });
+      return true;
+    })();
+    zxReady.catch(() => { zxReady = null; });
+    return zxReady;
+  }
+  function toImageData(bmp, maxSide) {
+    const k = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0, c.width, c.height);
+    return g.getImageData(0, 0, c.width, c.height);
+  }
+  const RETAIL = new Set(["EAN-13", "EAN-8", "UPC-A", "UPC-E"]);
+  function macFrom(text) {
+    const t = String(text || "").trim();
+    const hasPrefix = /^\s*MAC\s*(ADDR(ESS)?)?\s*[:#=\-]?/i.test(t);
+    const body = t.replace(/^\s*MAC\s*(ADDR(ESS)?)?\s*[:#=\-]?\s*/i, "");
+    const m = body.match(/(?:[0-9A-F]{2}[:\-. ]?){5}[0-9A-F]{2}/i);
+    if (!m) return null;
+    const hex = m[0].replace(/[^0-9A-F]/gi, "").toUpperCase();
+    if (hex.length !== 12) return null;
+    const exact = hex.length === body.replace(/[:\-. ]/g, "").length;
+    return { mac: hex.match(/../g).join(":"), hasPrefix, exact, letters: /[A-F]/.test(hex) };
+  }
+  async function readCodes(file) {
+    await prepZX();
+    const bmp = await loadBitmap(file);
+    const opts = { tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, maxNumberOfSymbols: 12 };
+    const seen = new Map();
+    for (const side of [2400, 1400, 3600]) {
+      let res = [];
+      try { res = await ZXingWASM.readBarcodes(toImageData(bmp, side), opts); } catch {}
+      for (const r of res) if (r.isValid !== false && r.text && !seen.has(r.text)) seen.set(r.text, { text: r.text, format: r.format });
+      if ([...seen.values()].some(c => macFrom(c.text) && !RETAIL.has(c.format))) break;
+    }
+    const codes = [...seen.values()];
+    const macs = [];
+    for (const c of codes) {
+      if (RETAIL.has(c.format)) continue;
+      const m = macFrom(c.text); if (!m) continue;
+      const score = (m.hasPrefix ? 4 : 0) + (m.exact ? 2 : 0) + (m.letters ? 1 : 0);
+      if (!macs.some(x => x.mac === m.mac)) macs.push({ mac: m.mac, raw: c.text, score });
+    }
+    macs.sort((a, b) => b.score - a.score);
+    return { macs, codes, bmp };
+  }
+
+  /* ---------- Downloads / sharing ---------- */
+  let dl = null;
+  if (window.claude && window.claude.use) window.claude.use("downloads").then(d => { dl = d; }).catch(() => {});
+  async function saveFile(filename, blob) {
+    if (dl) {
+      try { await dl.save({ filename, data: blob }); toast("Saved " + filename); return; }
+      catch (e) { if (e && e.code === "declined") return; if (e && e.code === "rate_limited") { toast("Finish the open save first"); return; } }
+    }
+    try {
+      const f = new File([blob], filename, { type: blob.type || "application/octet-stream" });
+      if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: filename }); return; }
+    } catch (e) { if (e && e.name === "AbortError") return; }
+    try {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    } catch { toast("Saving isn't available here. Press and hold a photo to save it."); }
+  }
+  function csvCell(v) { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  function reportCSV(rooms) {
+    const head = ["Room", "MAC", "Status", "Flagged", "Notes", "Checked in", "Completed", "Installer"];
+    const rows = rooms.map(r => [r.number, r.mac || "", isComplete(r) ? "Complete" : `${doneCount(r)}/4 steps`, r.flagged ? "YES" : "", r.notes || "", r.checkedInAt ? stampTime(r.checkedInAt) : "", r.completedAt ? stampTime(r.completedAt) : "", r.tech || ""]);
+    return "﻿" + [head, ...rows].map(r => r.map(csvCell).join(",")).join("\r\n");
+  }
+  async function addRoomToZip(zip, r, prefix) {
+    const folder = prefix ? zip.folder(safeName(`Room ${r.number}`)) : zip;
+    for (const s of STEPS) {
+      const b = await store.getPhoto(r.id, s.key);
+      if (b) folder.file(safeName(`Room ${r.number} - ${PHOTO_NAME[s.key]}.jpg`), b);
+    }
+    const lines = [`Room ${r.number}`, `MAC: ${r.mac || "(not recorded)"}`, `Installer: ${r.tech || ""}`, `Checked in: ${r.checkedInAt ? stampTime(r.checkedInAt) : ""}`, `Completed: ${r.completedAt ? stampTime(r.completedAt) : "not complete"}`, `Flagged issue: ${r.flagged ? "YES" : "no"}`, "", "Notes:", r.notes || "(none)"];
+    folder.file(safeName(`Room ${r.number} - Notes.txt`), lines.join("\r\n"));
+  }
+  async function exportRooms(rooms, filename) {
+    if (!window.JSZip) { toast("Export needs a signal to load. Try again with signal."); return; }
+    toast("Building " + filename + "…");
+    const zip = new JSZip();
+    for (const r of rooms) await addRoomToZip(zip, r, rooms.length > 1);
+    zip.file("Report.csv", reportCSV(rooms));
+    const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+    await saveFile(filename, blob);
+  }
+
+  /* ---------- State ---------- */
+  let rooms = [];
+  let view = { name: "home" };
+  let filter = "";
+  const urls = new Map();
+  function doneCount(r) { return STEPS.filter(s => r.steps && r.steps[s.key]).length; }
+  function isComplete(r) { return doneCount(r) === STEPS.length; }
+  function currentStep(r) { const s = STEPS.find(s => !(r.steps && r.steps[s.key])); return s ? s.key : null; }
+  function sortRooms(list) { return list.sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true })); }
+  async function refresh() { rooms = sortRooms(await store.allRooms()); }
+  async function photoURL(id, key) {
+    const b = await store.getPhoto(id, key); const k = id + ":" + key;
+    if (urls.has(k)) URL.revokeObjectURL(urls.get(k));
+    if (!b) { urls.delete(k); return null; }
+    const u = URL.createObjectURL(b); urls.set(k, u); return u;
+  }
+
+  /* ---------- Views ---------- */
+  const app = $("#app");
+
+  async function render() {
+    if (view.name === "home") return renderHome();
+    if (view.name === "checkin") return renderCheckin();
+    if (view.name === "room") return renderRoom();
+  }
+
+  function renderHome() {
+    const tech = ls.get("tvlog.tech", "");
+    const done = rooms.filter(isComplete).length, flagged = rooms.filter(r => r.flagged).length;
+    const q = filter.trim().toLowerCase();
+    const list = q ? rooms.filter(r => String(r.number).toLowerCase().includes(q) || (r.mac || "").toLowerCase().replace(/:/g, "").includes(q.replace(/:/g, ""))) : rooms;
+    app.innerHTML = `
+      <header class="row spread" style="padding-top:6px">
+        <div><div class="eyebrow">Hotel TV box install</div><h1>Install Log</h1></div>
+      </header>
+      ${!storageOk ? `<div class="banner"><b>This browser isn't keeping data.</b> Save each room (Save room zip) before closing this page.</div>` : ""}
+      <div class="panel">
+        <label class="field" for="tech">Your name <span class="muted small" style="font-weight:400">Printed on every photo so the office knows who did the room</span>
+          <input type="text" id="tech" value="${esc(tech)}" placeholder="e.g. Dae" autocomplete="name">
+        </label>
+      </div>
+      <button class="primary big" id="newroom">Check in to a room</button>
+      <div class="stats">
+        <div class="stat"><b>${rooms.length}</b><span>Rooms</span></div>
+        <div class="stat"><b>${done}</b><span>Complete</span></div>
+        <div class="stat"><b style="color:${flagged ? "var(--flag)" : "inherit"}">${flagged}</b><span>Flagged</span></div>
+      </div>
+      <section class="rooms" aria-label="Rooms">
+        <div class="row spread"><h2>Rooms on this phone</h2></div>
+        ${rooms.length > 6 ? `<input type="text" id="filter" class="search" placeholder="Find a room or MAC" value="${esc(filter)}">` : ""}
+        ${list.length ? list.map(r => `
+          <button class="roomrow" data-open="${esc(r.id)}">
+            <span class="plate">${esc(r.number)}</span>
+            <span style="min-width:0">
+              <span class="mac">${r.mac ? esc(r.mac) : '<span class="muted">No MAC yet</span>'}</span><br>
+              <span class="muted small">${esc(fmtTime(r.updatedAt))}${r.tech ? " · " + esc(r.tech) : ""}</span>
+            </span>
+            <span class="chips">
+              ${isComplete(r) ? '<span class="chip done">Complete</span>' : `<span class="chip go">${doneCount(r)}/4 done</span>`}
+              ${r.flagged ? '<span class="chip flag">Flagged</span>' : ""}
+            </span>
+          </button>`).join("") : `<div class="empty">${rooms.length ? "No rooms match." : "No rooms yet. Tap <b>Check in to a room</b> and photograph the room number to start."}</div>`}
+      </section>
+      ${rooms.length ? `
+      <div class="panel">
+        <h3 style="font-size:20px">Send your work</h3>
+        <p class="muted small" style="margin:0">Photos are named by room and step, e.g. <i>Room 204 - Cable Management.jpg</i>. The report lists every room, MAC, flag and note.</p>
+        <div class="row">
+          <button class="grow" id="csv">Report (.csv)</button>
+          <button class="grow" id="zipall">All rooms (.zip)</button>
+        </div>
+      </div>` : ""}
+    `;
+    $("#tech").addEventListener("change", e => { ls.set("tvlog.tech", e.target.value.trim()); toast("Name saved"); });
+    $("#newroom").onclick = () => startCheckin();
+    const f = $("#filter"); if (f) f.oninput = e => { filter = e.target.value; const pos = e.target.selectionStart; renderHome(); const nf = $("#filter"); nf.focus(); nf.setSelectionRange(pos, pos); };
+    app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { view = { name: "room", id: b.dataset.open }; render(); window.scrollTo(0, 0); });
+    const csv = $("#csv"); if (csv) csv.onclick = () => saveFile(`TV Install Report ${stampTime(Date.now()).slice(0, 10)}.csv`, new Blob([reportCSV(rooms)], { type: "text/csv" }));
+    const za = $("#zipall"); if (za) za.onclick = () => exportRooms(rooms, `TV Install ${stampTime(Date.now()).slice(0, 10)}${tech ? " - " + safeName(tech) : ""}.zip`);
+  }
+
+  /* Check-in: photo of the room number, then type the number it shows */
+  function startCheckin() {
+    takePhoto(async (file) => {
+      view = { name: "checkin", file, t: Date.now(), preview: URL.createObjectURL(file) };
+      render();
+    });
+  }
+  function renderCheckin() {
+    const v = view;
+    app.innerHTML = `
+      <div class="topbar"><button class="ghost" id="cancel">Cancel</button><h2 class="grow">Check in</h2></div>
+      <div class="step current">
+        <div class="stephead"><span class="num">1</span><div><h3 style="font-size:20px">Room Number</h3><div class="muted small">Type the number on the sign so every photo lands in the right room.</div></div></div>
+        <img class="photo" src="${v.preview}" alt="Room number photo">
+        <button id="retake">Retake</button>
+        <label class="field" for="roomno">Room number
+          <input type="text" id="roomno" inputmode="numeric" autocomplete="off" autocapitalize="characters" placeholder="e.g. 204" style="font-family:var(--display);font-size:30px;font-weight:700">
+        </label>
+        <div id="dupe"></div>
+      </div>
+      <button class="primary big" id="go" disabled>Check in</button>
+    `;
+    const inp = $("#roomno"), go = $("#go"), dupe = $("#dupe");
+    const check = () => {
+      const n = inp.value.trim().toUpperCase();
+      go.disabled = !n;
+      const ex = rooms.find(r => String(r.number).toUpperCase() === n);
+      dupe.innerHTML = ex ? `<div class="banner" style="background:var(--accent-soft);border-color:var(--accent)">Room ${esc(n)} is already on this phone (${doneCount(ex)}/4 done). Check in will open it and replace its Room Number photo.</div>` : "";
+    };
+    inp.oninput = check; setTimeout(() => inp.focus(), 50);
+    $("#cancel").onclick = () => { URL.revokeObjectURL(v.preview); view = { name: "home" }; render(); };
+    $("#retake").onclick = () => takePhoto(file => { URL.revokeObjectURL(v.preview); view = { name: "checkin", file, t: Date.now(), preview: URL.createObjectURL(file) }; render(); });
+    go.onclick = async () => {
+      const n = inp.value.trim().toUpperCase(); if (!n) return;
+      go.disabled = true; go.innerHTML = '<span class="spinner"></span> Saving';
+      let room = rooms.find(r => String(r.number).toUpperCase() === n);
+      if (!room) room = { id: uid(), number: n, mac: "", notes: "", flagged: false, steps: {}, tech: ls.get("tvlog.tech", ""), checkedInAt: v.t };
+      room.steps.roomNumber = v.t;
+      const blob = await processPhoto(v.file, caption(room, "roomNumber", v.t));
+      await store.putPhoto(room.id, "roomNumber", blob);
+      await store.putRoom(room);
+      URL.revokeObjectURL(v.preview);
+      await refresh();
+      view = { name: "room", id: room.id }; render(); window.scrollTo(0, 0);
+      toast(`Checked in to room ${n}`);
+    };
+  }
+
+  /* Room: the four-step workflow */
+  async function renderRoom() {
+    const r = rooms.find(x => x.id === view.id);
+    if (!r) { view = { name: "home" }; return render(); }
+    const cur = currentStep(r);
+    const pics = {};
+    for (const s of STEPS) pics[s.key] = await photoURL(r.id, s.key);
+    const scan = view.scan && view.scan.roomId === r.id ? view.scan : null;
+
+    const stepHTML = (s, i) => {
+      const has = !!(r.steps && r.steps[s.key]);
+      const cls = has ? "complete" : (s.key === cur ? "current" : "");
+      let body = "";
+      if (s.key === "mac") {
+        if (scan && scan.busy) body = `<div class="working"><span class="spinner"></span> Reading barcodes…</div>`;
+        else if (scan && scan.result) body = macChooser(scan);
+        else if (r.mac) body = `<div class="macbig">${esc(r.mac)}</div>`;
+        if (pics.mac) body = `<img class="photo" src="${pics.mac}" alt="MAC label photo, room ${esc(r.number)}">` + body;
+        const act = has || scan
+          ? `<div class="row"><button class="grow" data-shoot="mac">Retake</button><button class="grow" data-editmac>Type MAC</button></div>`
+          : `<div class="row"><button class="primary grow" data-shoot="mac">Scan MAC barcode</button><button data-editmac>Type it</button></div>`;
+        body += act;
+      } else {
+        if (pics[s.key]) body += `<img class="photo" src="${pics[s.key]}" alt="${esc(PHOTO_NAME[s.key])}, room ${esc(r.number)}">`;
+        body += has ? `<button data-shoot="${s.key}">Retake</button>` : `<button class="${s.key === cur ? "primary" : ""}" data-shoot="${s.key}">Take ${esc(s.label)} photo</button>`;
+      }
+      return `<article class="step ${cls}">
+        <div class="stephead"><span class="num">${has ? "✓" : i + 1}</span>
+          <div class="grow"><h3 style="font-size:20px">${esc(s.label)}</h3><div class="muted small">${has ? "Done " + esc(fmtTime(r.steps[s.key])) : esc(s.hint)}</div></div>
+        </div>${body}</article>`;
+    };
+
+    app.innerHTML = `
+      <div class="topbar">
+        <button class="ghost" id="back" aria-label="All rooms">‹ Rooms</button>
+        <span class="plate">${esc(r.number)}</span>
+        <span class="grow"></span>
+        ${isComplete(r) ? '<span class="chip done">Complete</span>' : `<span class="chip go">${doneCount(r)}/4</span>`}
+      </div>
+      ${r.flagged || r.notes ? `<button class="panel" id="notesum" style="text-align:left;align-items:stretch;${r.flagged ? "border-color:var(--flag)" : ""}">
+        <span class="row">${r.flagged ? '<span class="chip flag">Flagged issue</span>' : '<span class="eyebrow">Notes</span>'}</span>
+        <span style="white-space:pre-wrap;font-weight:400">${esc(r.notes || "No details added.")}</span></button>` : ""}
+      <section class="steps">${STEPS.map(stepHTML).join("")}</section>
+      <div class="panel">
+        <div class="row">
+          <button class="grow" id="ziproom">Save room (.zip)</button>
+        </div>
+        <div id="delwrap"><button class="ghost danger" id="del" style="width:100%">Delete this room</button></div>
+      </div>
+      <div class="bottombar"><div class="inner">
+        <button class="grow ${r.flagged ? "danger" : ""}" id="notes">${r.flagged ? "⚑ Notes" : "Notes"}</button>
+        ${isComplete(r) ? `<button class="primary grow" id="finish">Done, next room</button>` : ""}
+      </div></div>
+    `;
+    $("#back").onclick = () => { view = { name: "home" }; render(); window.scrollTo(0, 0); };
+    $("#notes").onclick = () => openNotes(r);
+    const ns = $("#notesum"); if (ns) ns.onclick = () => openNotes(r);
+    const fin = $("#finish"); if (fin) fin.onclick = () => { view = { name: "home" }; render(); window.scrollTo(0, 0); };
+    $("#ziproom").onclick = () => exportRooms([r], safeName(`Room ${r.number}.zip`));
+    $("#del").onclick = () => {
+      $("#delwrap").innerHTML = `<div class="banner">Delete room ${esc(r.number)} and all its photos from this phone? This can't be undone.</div>
+        <div class="row" style="margin-top:8px"><button class="grow" id="keep">Keep it</button><button class="grow danger" id="really">Delete</button></div>`;
+      $("#keep").onclick = () => renderRoom();
+      $("#really").onclick = async () => { await store.delRoom(r.id); await refresh(); view = { name: "home" }; render(); toast(`Room ${r.number} deleted`); };
+    };
+    app.querySelectorAll("[data-shoot]").forEach(b => b.onclick = () => shoot(r, b.dataset.shoot));
+    app.querySelectorAll("[data-editmac]").forEach(b => b.onclick = () => openMacEdit(r));
+    app.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => pickMac(r, b.dataset.pick));
+    const keepMac = $("#keepmac"); if (keepMac) keepMac.onclick = () => confirmMac(r);
+  }
+
+  function macChooser(scan) {
+    const { macs, codes } = scan.result;
+    if (!macs.length) {
+      const others = codes.filter(c => !macs.some(m => m.raw === c.text));
+      return `<div class="banner">No MAC barcode found in that photo. Retake it closer, with the <b>MAC:</b> barcode filling most of the picture, or type the MAC.</div>
+        ${others.length ? `<div class="muted small">Barcodes it did read (tap one if it is the MAC):</div><div class="cands">${others.map(c => `<button class="cand" data-pick="${esc(c.text)}">${esc(c.text)}</button>`).join("")}</div>` : ""}`;
+    }
+    const sel = scan.selected || macs[0].mac;
+    return `<div class="macbig">${esc(sel)}</div>
+      ${macs.length > 1 ? `<div class="muted small">More than one MAC-style barcode on the label. Tap the one printed next to <b>MAC:</b></div>
+        <div class="cands">${macs.map(m => `<button class="cand ${m.mac === sel ? "sel" : ""}" data-pick="${esc(m.mac)}">${esc(m.mac)}${m.raw !== m.mac ? ` <span class="muted">(${esc(m.raw)})</span>` : ""}</button>`).join("")}</div>` : ""}
+      <button class="primary" id="keepmac">Use this MAC</button>`;
+  }
+
+  async function shoot(r, key) {
+    takePhoto(async (file) => {
+      const t = Date.now();
+      if (key === "mac") {
+        view.scan = { roomId: r.id, busy: true, file, t };
+        await store.putPhoto(r.id, "mac", await processPhoto(file, caption({ ...r, mac: "" }, "mac", t)));
+        renderRoom();
+        let result;
+        try { result = await readCodes(file); }
+        catch (e) { result = { macs: [], codes: [], failed: true }; toast("Scanner didn't load. Type the MAC instead."); }
+        view.scan = { roomId: r.id, busy: false, file, t, result, selected: result.macs[0] && result.macs[0].mac };
+        if (result.bmp) view.scan.bmp = result.bmp;
+        renderRoom();
+        return;
+      }
+      r.steps[key] = t;
+      if (key === "overall" && isComplete(r) && !r.completedAt) r.completedAt = t;
+      await store.putPhoto(r.id, key, await processPhoto(file, caption(r, key, t)));
+      await store.putRoom(r); await refresh();
+      renderRoom();
+      toast(`${PHOTO_NAME[key]} saved`);
+    });
+  }
+  function pickMac(r, value) {
+    const m = macFrom(value);
+    if (view.scan) view.scan.selected = m ? m.mac : value;
+    if (!m && view.scan) { openMacEdit(r, value); return; }
+    renderRoom();
+  }
+  async function confirmMac(r) {
+    const s = view.scan; if (!s) return;
+    await setMac(r, s.selected, s);
+  }
+  async function setMac(r, mac, scan) {
+    r.mac = mac;
+    const t = (scan && scan.t) || Date.now();
+    r.steps.mac = t;
+    if (isComplete(r) && !r.completedAt) r.completedAt = Date.now();
+    if (scan && scan.file) await store.putPhoto(r.id, "mac", await processPhoto(scan.bmp || scan.file, caption(r, "mac", t)));
+    view.scan = null;
+    await store.putRoom(r); await refresh();
+    renderRoom();
+    toast("MAC saved: " + mac);
+  }
+
+  /* ---------- Sheets ---------- */
+  const sheet = $("#sheet");
+  function closeSheet() { sheet.innerHTML = ""; }
+  function openSheet(html, onOpen) {
+    sheet.innerHTML = `<div class="sheet-bg" id="sbg"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+    $("#sbg").addEventListener("click", e => { if (e.target.id === "sbg") closeSheet(); });
+    onOpen && onOpen();
+  }
+  function openNotes(r) {
+    openSheet(`
+      <div class="row spread"><h2>Notes · Room ${esc(r.number)}</h2></div>
+      <label class="toggle" for="flag"><input type="checkbox" id="flag" ${r.flagged ? "checked" : ""}> Flag an issue in this room</label>
+      <label class="field" for="notetext">Note
+        <textarea id="notetext" placeholder="e.g. No power at TV outlet. Bracket loose. Coax damaged behind wall plate.">${esc(r.notes || "")}</textarea>
+      </label>
+      <div class="row"><button class="grow" id="ncancel">Cancel</button><button class="primary grow" id="nsave">Save note</button></div>
+    `, () => {
+      $("#ncancel").onclick = closeSheet;
+      $("#nsave").onclick = async () => {
+        const text = $("#notetext").value.trim();
+        const flag = $("#flag").checked;
+        r.notes = text; r.flagged = flag;
+        await store.putRoom(r); await refresh(); closeSheet(); renderRoom();
+        toast(flag ? "Issue flagged" : "Note saved");
+      };
+    });
+  }
+  function openMacEdit(r, prefill) {
+    const cur = prefill || (view.scan && view.scan.selected) || r.mac || "";
+    openSheet(`
+      <h2>MAC address · Room ${esc(r.number)}</h2>
+      <label class="field" for="macin">Type the 12 characters after MAC: on the label
+        <input type="text" id="macin" value="${esc(cur)}" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="00:1A:2B:3C:4D:5E" style="font-family:var(--mono);font-size:22px">
+      </label>
+      <div id="macmsg" class="muted small">Colons are optional.</div>
+      <div class="row"><button class="grow" id="mcancel">Cancel</button><button class="primary grow" id="msave">Save MAC</button></div>
+    `, () => {
+      const inp = $("#macin"); setTimeout(() => inp.focus(), 50);
+      $("#mcancel").onclick = closeSheet;
+      $("#msave").onclick = async () => {
+        const m = macFrom(inp.value);
+        if (!m) { $("#macmsg").innerHTML = '<span style="color:var(--flag);font-weight:600">That isn\'t a full MAC. It should be 12 characters using 0–9 and A–F.</span>'; return; }
+        closeSheet();
+        await setMac(r, m.mac, view.scan && view.scan.roomId === r.id ? view.scan : null);
+      };
+    });
+  }
+
+  /* ---------- Boot ---------- */
+  (async () => {
+    await openDB();
+    await refresh();
+    render();
+    prepZX().catch(() => {});
+  })();
+})();
+</script>
