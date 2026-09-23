@@ -282,27 +282,55 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       setTimeout(() => URL.revokeObjectURL(a.href), 30000);
     } catch { toast("Saving isn't available here. Press and hold a photo to save it."); }
   }
-  function csvCell(v) { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  /* One flat row per room. Plain column names, one value per cell, so any spreadsheet or import tool can map it. */
+  const dataTime = (t) => { if (!t) return ""; const d = new Date(t); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+  const photoPath = (r, key) => (r.steps && r.steps[key]) ? `${safeName("Room " + r.number)}/${safeName(`Room ${r.number} - ${PHOTO_NAME[key]}.jpg`)}` : "";
+  const COLUMNS = [
+    ["room_number", r => r.number],
+    ["mac_address", r => r.mac || ""],
+    ["mac_address_plain", r => (r.mac || "").replace(/:/g, "")],
+    ["status", r => isComplete(r) ? "Complete" : "In progress"],
+    ["steps_done", r => doneCount(r)],
+    ["flagged_issue", r => r.flagged ? "Yes" : "No"],
+    ["notes", r => r.notes || ""],
+    ["installer", r => r.tech || ""],
+    ["checked_in", r => dataTime(r.checkedInAt)],
+    ["completed", r => dataTime(r.completedAt)],
+    ["room_number_photo_time", r => dataTime(r.steps && r.steps.roomNumber)],
+    ["mac_scan_time", r => dataTime(r.steps && r.steps.mac)],
+    ["cable_management_photo_time", r => dataTime(r.steps && r.steps.cable)],
+    ["overall_finished_photo_time", r => dataTime(r.steps && r.steps.overall)],
+    ["room_number_photo_file", r => photoPath(r, "roomNumber")],
+    ["mac_label_photo_file", r => photoPath(r, "mac")],
+    ["cable_management_photo_file", r => photoPath(r, "cable")],
+    ["overall_finished_photo_file", r => photoPath(r, "overall")],
+    ["record_id", r => r.id]
+  ];
+  function csvCell(v) { const s = String(v ?? ""); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
   function reportCSV(rooms) {
-    const head = ["Room", "MAC", "Status", "Flagged", "Notes", "Checked in", "Completed", "Installer"];
-    const rows = rooms.map(r => [r.number, r.mac || "", isComplete(r) ? "Complete" : `${doneCount(r)}/4 steps`, r.flagged ? "YES" : "", r.notes || "", r.checkedInAt ? stampTime(r.checkedInAt) : "", r.completedAt ? stampTime(r.completedAt) : "", r.tech || ""]);
-    return "﻿" + [head, ...rows].map(r => r.map(csvCell).join(",")).join("\r\n");
+    return "\uFEFF" + [COLUMNS.map(c => c[0]), ...rooms.map(r => COLUMNS.map(c => c[1](r)))].map(row => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
   }
-  async function addRoomToZip(zip, r, prefix) {
-    const folder = prefix ? zip.folder(safeName(`Room ${r.number}`)) : zip;
+  function reportJSON(rooms) {
+    const out = rooms.map(r => Object.fromEntries(COLUMNS.map(([k, f]) => [k, k === "steps_done" ? f(r) : (f(r) === "" ? null : f(r))])));
+    out.forEach(o => { o.flagged_issue = o.flagged_issue === "Yes"; });
+    return JSON.stringify({ exported: dataTime(Date.now()), exported_by: ls.get("tvlog.tech", ""), room_count: out.length, rooms: out }, null, 2);
+  }
+  async function addRoomToZip(zip, r) {
+    const folder = zip.folder(safeName(`Room ${r.number}`));
     for (const s of STEPS) {
       const b = await store.getPhoto(r.id, s.key);
       if (b) folder.file(safeName(`Room ${r.number} - ${PHOTO_NAME[s.key]}.jpg`), b);
     }
-    const lines = [`Room ${r.number}`, `MAC: ${r.mac || "(not recorded)"}`, `Installer: ${r.tech || ""}`, `Checked in: ${r.checkedInAt ? stampTime(r.checkedInAt) : ""}`, `Completed: ${r.completedAt ? stampTime(r.completedAt) : "not complete"}`, `Flagged issue: ${r.flagged ? "YES" : "no"}`, "", "Notes:", r.notes || "(none)"];
+    const lines = [`Room ${r.number}`, `MAC: ${r.mac || "(not recorded)"}`, `Installer: ${r.tech || ""}`, `Checked in: ${dataTime(r.checkedInAt)}`, `Completed: ${r.completedAt ? dataTime(r.completedAt) : "not complete"}`, `Flagged issue: ${r.flagged ? "YES" : "no"}`, "", "Notes:", r.notes || "(none)"];
     folder.file(safeName(`Room ${r.number} - Notes.txt`), lines.join("\r\n"));
   }
   async function exportRooms(rooms, filename) {
     if (!window.JSZip) { toast("Export needs a signal to load. Try again with signal."); return; }
     toast("Building " + filename + "…");
     const zip = new JSZip();
-    for (const r of rooms) await addRoomToZip(zip, r, rooms.length > 1);
+    for (const r of rooms) await addRoomToZip(zip, r);
     zip.file("Report.csv", reportCSV(rooms));
+    zip.file("Report.json", reportJSON(rooms));
     const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
     await saveFile(filename, blob);
   }
@@ -373,18 +401,20 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       ${rooms.length ? `
       <div class="panel">
         <h3 style="font-size:20px">Send your work</h3>
-        <p class="muted small" style="margin:0">Photos are named by room and step, e.g. <i>Room 204 - Cable Management.jpg</i>. The report lists every room, MAC, flag and note.</p>
+        <p class="muted small" style="margin:0">Photos are named by room and step, e.g. <i>Room 204 - Cable Management.jpg</i>. The spreadsheet has one row per room: MAC, flag, notes, times and photo file names. It opens in Excel, Numbers or Google Sheets. The data file is the same information in the format most software imports.</p>
         <div class="row">
-          <button class="grow" id="csv">Report (.csv)</button>
-          <button class="grow" id="zipall">All rooms (.zip)</button>
+          <button class="grow" id="csv">Spreadsheet (.csv)</button>
+          <button class="grow" id="json">Data file (.json)</button>
         </div>
+        <button id="zipall">All rooms with photos (.zip)</button>
       </div>` : ""}
     `;
     $("#tech").addEventListener("change", e => { ls.set("tvlog.tech", e.target.value.trim()); toast("Name saved"); });
     $("#newroom").onclick = () => startCheckin();
     const f = $("#filter"); if (f) f.oninput = e => { filter = e.target.value; const pos = e.target.selectionStart; renderHome(); const nf = $("#filter"); nf.focus(); nf.setSelectionRange(pos, pos); };
     app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { view = { name: "room", id: b.dataset.open }; render(); window.scrollTo(0, 0); });
-    const csv = $("#csv"); if (csv) csv.onclick = () => saveFile(`TV Install Report ${stampTime(Date.now()).slice(0, 10)}.csv`, new Blob([reportCSV(rooms)], { type: "text/csv" }));
+    const csv = $("#csv"); if (csv) csv.onclick = () => saveFile(`TV Install Report ${stampTime(Date.now()).slice(0, 10)}${tech ? " - " + safeName(tech) : ""}.csv`, new Blob([reportCSV(rooms)], { type: "text/csv" }));
+    const js = $("#json"); if (js) js.onclick = () => saveFile(`TV Install Data ${stampTime(Date.now()).slice(0, 10)}${tech ? " - " + safeName(tech) : ""}.json`, new Blob([reportJSON(rooms)], { type: "application/json" }));
     const za = $("#zipall"); if (za) za.onclick = () => exportRooms(rooms, `TV Install ${stampTime(Date.now()).slice(0, 10)}${tech ? " - " + safeName(tech) : ""}.zip`);
   }
 
@@ -537,7 +567,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
         return;
       }
       r.steps[key] = t;
-      if (key === "overall" && isComplete(r) && !r.completedAt) r.completedAt = t;
+      if (isComplete(r) && !r.completedAt) r.completedAt = t;
       await store.putPhoto(r.id, key, await processPhoto(file, caption(r, key, t)));
       await store.putRoom(r); await refresh();
       renderRoom();
