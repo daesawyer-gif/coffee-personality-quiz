@@ -135,7 +135,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
   function toast(msg) {
     document.querySelectorAll(".toast").forEach(t => t.remove());
     const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.appendChild(t);
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), 2600);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), msg.length > 60 ? 8000 : 2600);
   }
 
   /* ---------- Storage (IndexedDB on this phone) ---------- */
@@ -149,29 +149,57 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
         r.onupgradeneeded = () => { const db = r.result; db.createObjectStore("rooms", { keyPath: "id" }); db.createObjectStore("photos"); };
         r.onsuccess = () => res(r.result);
         r.onerror = () => { storageOk = false; res(null); };
+        r.onblocked = () => { storageOk = false; res(null); };
+        setTimeout(() => { if (!r.readyState || r.readyState === "pending") { storageOk = false; res(null); } }, 5000);
       } catch { storageOk = false; res(null); }
     });
     return dbp;
   }
+  // Never rejects and never hangs: any storage failure falls back to memory and shows the warning banner.
+  function storageFailed(e) {
+    if (storageOk) { storageOk = false; try { console.warn("storage failed", e); } catch {} toast("This phone isn't saving. Keep this page open and save each room's zip."); }
+  }
   async function tx(store, mode, fn) {
     const db = await openDB();
-    if (!db) return fn(null);
-    return new Promise((res, rej) => {
+    if (!db) return undefined;
+    return new Promise((res) => {
+      let done = false;
+      const finish = (v, err) => { if (done) return; done = true; clearTimeout(timer); if (err) storageFailed(err); res(v); };
+      const timer = setTimeout(() => finish(undefined, new Error("storage timeout")), 8000);
       try {
         const t = db.transaction(store, mode); const s = t.objectStore(store);
         const req = fn(s);
-        t.oncomplete = () => res(req && "result" in req ? req.result : undefined);
-        t.onerror = () => rej(t.error);
-      } catch (e) { storageOk = false; res(fn(null)); }
+        t.oncomplete = () => finish(req && "result" in req ? req.result : undefined);
+        t.onerror = () => finish(undefined, t.error);
+        t.onabort = () => finish(undefined, t.error || new Error("aborted"));
+      } catch (e) { finish(undefined, e); }
     });
   }
+  // Photos are stored as plain bytes, not Blobs: Safari can refuse to store Blobs when the page runs inside another site.
+  async function toRecord(blob) { return { type: blob.type || "image/jpeg", buf: await blob.arrayBuffer() }; }
+  function fromRecord(r) { if (!r) return null; if (r instanceof Blob) return r; if (r.buf) return new Blob([r.buf], { type: r.type || "image/jpeg" }); return null; }
   const store = {
-    async allRooms() { const r = await tx("rooms", "readonly", s => s ? s.getAll() : null); return r || [...memRooms.values()]; },
-    async putRoom(room) { room.updatedAt = Date.now(); memRooms.set(room.id, room); await tx("rooms", "readwrite", s => s && s.put(room)); },
-    async delRoom(id) { memRooms.delete(id); await tx("rooms", "readwrite", s => s && s.delete(id)); for (const k of STEPS) await this.delPhoto(id, k.key); },
-    async getPhoto(id, key) { const r = await tx("photos", "readonly", s => s ? s.get(id + ":" + key) : null); return r || memPhotos.get(id + ":" + key) || null; },
-    async putPhoto(id, key, blob) { memPhotos.set(id + ":" + key, blob); await tx("photos", "readwrite", s => s && s.put(blob, id + ":" + key)); },
-    async delPhoto(id, key) { memPhotos.delete(id + ":" + key); await tx("photos", "readwrite", s => s && s.delete(id + ":" + key)); }
+    async allRooms() {
+      const r = storageOk ? await tx("rooms", "readonly", s => s.getAll()) : null;
+      const map = new Map((r || []).map(x => [x.id, x]));
+      for (const [id, room] of memRooms) map.set(id, room);
+      return [...map.values()];
+    },
+    async putRoom(room) { room.updatedAt = Date.now(); memRooms.set(room.id, room); if (storageOk) await tx("rooms", "readwrite", s => s.put(room)); },
+    async delRoom(id) { memRooms.delete(id); if (storageOk) await tx("rooms", "readwrite", s => s.delete(id)); for (const k of STEPS) await this.delPhoto(id, k.key); },
+    async getPhoto(id, key) {
+      const k = id + ":" + key;
+      if (memPhotos.has(k)) return memPhotos.get(k);
+      return storageOk ? fromRecord(await tx("photos", "readonly", s => s.get(k))) : null;
+    },
+    async putPhoto(id, key, blob) {
+      const k = id + ":" + key;
+      memPhotos.set(k, blob);
+      if (!storageOk || !blob) return;
+      let rec; try { rec = await toRecord(blob); } catch (e) { storageFailed(e); return; }
+      await tx("photos", "readwrite", s => s.put(rec, k));
+    },
+    async delPhoto(id, key) { memPhotos.delete(id + ":" + key); if (storageOk) await tx("photos", "readwrite", s => s.delete(id + ":" + key)); }
   };
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
 
@@ -203,6 +231,11 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       captionLines.forEach((line, i) => g.fillText(line, Math.round(fs * 0.7), h + Math.round(fs * 0.6) + i * fs * 1.05));
     }
     return new Promise(res => c.toBlob(res, "image/jpeg", 0.84));
+  }
+  // If resizing fails on a phone, keep the original photo rather than losing it.
+  async function safePhoto(src, lines) {
+    try { const b = await processPhoto(src, lines); if (b) return b; } catch (e) { try { console.warn("photo processing failed", e); } catch {} }
+    return src instanceof Blob ? src : null;
   }
   function caption(room, key, t) {
     const who = ls.get("tvlog.tech", "");
@@ -456,13 +489,18 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       let room = rooms.find(r => String(r.number).toUpperCase() === n);
       if (!room) room = { id: uid(), number: n, mac: "", notes: "", flagged: false, steps: {}, tech: ls.get("tvlog.tech", ""), checkedInAt: v.t };
       room.steps.roomNumber = v.t;
-      const blob = await processPhoto(v.file, caption(room, "roomNumber", v.t));
-      await store.putPhoto(room.id, "roomNumber", blob);
-      await store.putRoom(room);
-      URL.revokeObjectURL(v.preview);
-      await refresh();
-      view = { name: "room", id: room.id }; render(); window.scrollTo(0, 0);
-      toast(`Checked in to room ${n}`);
+      try {
+        const blob = await safePhoto(v.file, caption(room, "roomNumber", v.t));
+        await store.putPhoto(room.id, "roomNumber", blob);
+        await store.putRoom(room);
+        URL.revokeObjectURL(v.preview);
+        await refresh();
+        view = { name: "room", id: room.id }; render(); window.scrollTo(0, 0);
+        toast(`Checked in to room ${n}`);
+      } catch (e) {
+        go.disabled = false; go.textContent = "Check in";
+        showError("Check in didn't finish", e);
+      }
     };
   }
 
@@ -505,6 +543,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
         <span class="grow"></span>
         ${isComplete(r) ? '<span class="chip done">Complete</span>' : `<span class="chip go">${doneCount(r)}/4</span>`}
       </div>
+      ${!storageOk ? `<div class="banner"><b>This phone isn't saving rooms.</b> Keep this page open and tap <b>Save room (.zip)</b> before moving on.</div>` : ""}
       ${r.flagged || r.notes ? `<button class="panel" id="notesum" style="text-align:left;align-items:stretch;${r.flagged ? "border-color:var(--flag)" : ""}">
         <span class="row">${r.flagged ? '<span class="chip flag">Flagged issue</span>' : '<span class="eyebrow">Notes</span>'}</span>
         <span style="white-space:pre-wrap;font-weight:400">${esc(r.notes || "No details added.")}</span></button>` : ""}
@@ -556,7 +595,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       const t = Date.now();
       if (key === "mac") {
         view.scan = { roomId: r.id, busy: true, file, t };
-        await store.putPhoto(r.id, "mac", await processPhoto(file, caption({ ...r, mac: "" }, "mac", t)));
+        await store.putPhoto(r.id, "mac", await safePhoto(file, caption({ ...r, mac: "" }, "mac", t)));
         renderRoom();
         let result;
         try { result = await readCodes(file); }
@@ -568,7 +607,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       }
       r.steps[key] = t;
       if (isComplete(r) && !r.completedAt) r.completedAt = t;
-      await store.putPhoto(r.id, key, await processPhoto(file, caption(r, key, t)));
+      await store.putPhoto(r.id, key, await safePhoto(file, caption(r, key, t)));
       await store.putRoom(r); await refresh();
       renderRoom();
       toast(`${PHOTO_NAME[key]} saved`);
@@ -589,7 +628,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
     const t = (scan && scan.t) || Date.now();
     r.steps.mac = t;
     if (isComplete(r) && !r.completedAt) r.completedAt = Date.now();
-    if (scan && scan.file) await store.putPhoto(r.id, "mac", await processPhoto(scan.bmp || scan.file, caption(r, "mac", t)));
+    if (scan && scan.file) await store.putPhoto(r.id, "mac", await safePhoto(scan.file, caption(r, "mac", t)));
     view.scan = null;
     await store.putRoom(r); await refresh();
     renderRoom();
@@ -643,6 +682,13 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       };
     });
   }
+
+  function showError(what, e) {
+    const msg = (e && (e.message || e.name)) || String(e || "unknown error");
+    toast(`${what}: ${msg}. Try again, or screenshot this for Claude.`);
+  }
+  window.addEventListener("unhandledrejection", ev => showError("Something went wrong", ev.reason));
+  window.addEventListener("error", ev => showError("Something went wrong", ev.error || ev.message));
 
   /* ---------- Boot ---------- */
   (async () => {
