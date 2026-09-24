@@ -5,6 +5,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <style>
 :root {
   --ground: #EEF0EC;
@@ -99,6 +100,14 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
 .spinner { width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+.shot { position: relative; border-radius: 10px; overflow: hidden; background: var(--panel-2); touch-action: manipulation; cursor: crosshair; }
+.shot img { width: 100%; height: auto; display: block; }
+.hit { position: absolute; min-height: 0; padding: 0; border-radius: 6px; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.55); background: rgba(217,96,26,.18); }
+.hit.notmac { border-style: dashed; background: rgba(255,255,255,.08); }
+.hit.sel { border-color: #2BD17E; background: rgba(43,209,126,.22); box-shadow: 0 0 0 2px rgba(0,0,0,.7), 0 0 0 6px rgba(43,209,126,.35); }
+.tapdot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.6); pointer-events: none; }
+.learned { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.learned button { min-height: 32px; padding: 4px 10px; font-size: 13px; }
 .empty { text-align: center; padding: 28px 16px; color: var(--ink-2); border: 2px dashed var(--line); border-radius: 14px; }
 .search { margin-top: 4px; }
 </style>
@@ -114,7 +123,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
   /* ---------- Workflow definition ---------- */
   const STEPS = [
     { key: "roomNumber", label: "Room Number", hint: "Photo of the room number sign. This checks you in to the room." },
-    { key: "mac", label: "MAC Address", hint: "Photo of the label on the back of the box. Get the barcode marked MAC: filling most of the picture." },
+    { key: "mac", label: "MAC Address", hint: "Photo of the label on the back of the box. Hold the phone level so the barcodes run sideways and look sharp." },
     { key: "cable", label: "Cable Management", hint: "Photo showing how the cables are run and tidied." },
     { key: "overall", label: "Overall Finished", hint: "Wide photo showing the finished install." }
   ];
@@ -242,28 +251,106 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
     return [`Room ${room.number}  |  ${PHOTO_NAME[key]}`, `${stampTime(t)}${who ? "  |  " + who : ""}${key === "mac" && room.mac ? "  |  MAC " + room.mac : ""}`];
   }
 
-  /* ---------- Barcode reading ---------- */
-  let zxReady = null;
+  /* ---------- Barcode reading ----------
+     Two engines: the fast one (WebAssembly) and a backup written in plain JavaScript,
+     used when the phone or page blocks the fast one. Every result carries a box
+     (0..1 of the photo's width/height) so the photo can show what was found. */
+  let zxReady = null, engine = "loading";
+  function withTimeout(p, ms) { return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]); }
   function prepZX() {
     if (zxReady) return zxReady;
-    zxReady = (async () => {
-      if (!window.ZXingWASM) throw new Error("scanner not loaded");
+    zxReady = withTimeout((async () => {
+      if (!window.ZXingWASM) throw new Error("fast scanner not loaded");
       let bin = null;
       try { const r = await fetch("zxing_reader.wasm"); if (r.ok) bin = await r.arrayBuffer(); } catch {}
       if (bin) await ZXingWASM.prepareZXingModule({ overrides: { wasmBinary: bin }, fireImmediately: true });
       else await ZXingWASM.prepareZXingModule({ fireImmediately: true });
       return true;
-    })();
-    zxReady.catch(() => { zxReady = null; });
+    })(), 12000);
+    zxReady.then(() => { engine = "fast"; }, () => { engine = window.ZXing ? "backup" : "none"; });
     return zxReady;
   }
-  function toImageData(bmp, maxSide) {
-    const k = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
-    const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
-    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0, c.width, c.height);
-    return g.getImageData(0, 0, c.width, c.height);
+  async function haveFast() { try { await prepZX(); return true; } catch { return false; } }
+
+  const normFmt = (f) => String(f || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const RETAIL = new Set(["ean13", "ean8", "upca", "upce"]);
+
+  // Draw a region of the photo (image pixels) onto a canvas no wider/taller than maxSide.
+  function regionCanvas(bmp, rg, maxSide) {
+    let scale = Math.min(1, maxSide / Math.max(rg.w, rg.h));
+    if (rg.w * scale < 900) scale = Math.min(2.5, 900 / rg.w); // enlarge small crops so thin bars survive
+    const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(rg.w * scale)); c.height = Math.max(1, Math.round(rg.h * scale));
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, rg.x, rg.y, rg.w, rg.h, 0, 0, c.width, c.height);
+    return { c, g, scale };
   }
-  const RETAIL = new Set(["EAN-13", "EAN-8", "UPC-A", "UPC-E"]);
+  function boxFrom(points, rg, scale, W, H, minH) {
+    const xs = points.map(p => rg.x + p.x / scale), ys = points.map(p => rg.y + p.y / scale);
+    let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if (y1 - y0 < minH) { const cy = (y0 + y1) / 2; y0 = cy - minH / 2; y1 = cy + minH / 2; }
+    return { x: x0 / W, y: y0 / H, w: Math.max(0.02, (x1 - x0) / W), h: (y1 - y0) / H };
+  }
+  async function decodeFast(bmp, rg, maxSide) {
+    const { g, c, scale } = regionCanvas(bmp, rg, maxSide);
+    const res = await ZXingWASM.readBarcodes(g.getImageData(0, 0, c.width, c.height), { tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, maxNumberOfSymbols: 12 });
+    return res.filter(r => r.isValid !== false && r.text).map(r => {
+      const q = r.position || {};
+      const pts = [q.topLeft, q.topRight, q.bottomLeft, q.bottomRight].filter(Boolean);
+      return { text: r.text, fmt: normFmt(r.format), box: pts.length ? boxFrom(pts, rg, scale, bmp.width, bmp.height, bmp.height * 0.03) : null };
+    });
+  }
+  let jsReader = null;
+  function decodeBackup(bmp, rg, bands) {
+    if (!window.ZXing) return [];
+    if (!jsReader) { jsReader = new ZXing.MultiFormatReader(); const h = new Map(); h.set(ZXing.DecodeHintType.TRY_HARDER, true); jsReader.setHints(h); }
+    const { g, c, scale } = regionCanvas(bmp, rg, 1600);
+    const out = [];
+    const bandH = Math.max(40, Math.round(c.height / bands));
+    for (let y = 0; y < c.height; y += Math.max(20, Math.round(bandH / 2))) {
+      const h = Math.min(bandH, c.height - y); if (h < 20) break;
+      const d = g.getImageData(0, y, c.width, h);
+      const lum = new Uint8ClampedArray(c.width * h);
+      for (let i = 0, j = 0; i < lum.length; i++, j += 4) lum[i] = (d.data[j] * 77 + d.data[j + 1] * 150 + d.data[j + 2] * 29) >> 8;
+      try {
+        const r = jsReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.RGBLuminanceSource(lum, c.width, h))));
+        const pts = (r.getResultPoints() || []).map(p => ({ x: p.getX(), y: p.getY() + y }));
+        if (!pts.length) pts.push({ x: 0, y: y }, { x: c.width, y: y + h });
+        out.push({ text: r.getText(), fmt: normFmt(ZXing.BarcodeFormat[r.getBarcodeFormat()]), box: boxFrom(pts, rg, scale, bmp.width, bmp.height, bmp.height * 0.03) });
+      } catch {}
+      jsReader.reset();
+    }
+    return out;
+  }
+  function addCodes(seen, list) { for (const c of list) if (c.text && !seen.has(c.text)) seen.set(c.text, c); }
+  const yieldUI = () => new Promise(r => setTimeout(r, 0));
+
+  // Whole photo: find every barcode.
+  async function decodeAll(bmp) {
+    const full = { x: 0, y: 0, w: bmp.width, h: bmp.height };
+    const seen = new Map();
+    if (await haveFast()) {
+      for (const side of [2400, 1400, 3600]) {
+        try { addCodes(seen, await decodeFast(bmp, full, side)); } catch {}
+        if ([...seen.values()].some(c => macFrom(c.text))) break;
+      }
+    }
+    if (!seen.size && window.ZXing) { await yieldUI(); addCodes(seen, decodeBackup(bmp, full, 10)); }
+    return [...seen.values()];
+  }
+  // Around a tapped point (nx, ny as 0..1): a horizontal strip, since label barcodes run sideways.
+  async function decodeNear(bmp, nx, ny) {
+    const W = bmp.width, H = bmp.height, seen = new Map();
+    for (const frac of [0.10, 0.18, 0.06]) {
+      const h = Math.round(H * frac), y = Math.max(0, Math.min(H - h, Math.round(ny * H - h / 2)));
+      const rg = { x: 0, y, w: W, h };
+      if (await haveFast()) { try { addCodes(seen, await decodeFast(bmp, rg, 2400)); } catch {} }
+      if (!seen.size && window.ZXing) { await yieldUI(); addCodes(seen, decodeBackup(bmp, rg, 3)); }
+      if (seen.size) break;
+    }
+    const list = [...seen.values()];
+    const dist = (c) => c.box ? Math.hypot(nx - (c.box.x + c.box.w / 2), (ny - (c.box.y + c.box.h / 2)) * 2) : 9;
+    return list.sort((a, b) => dist(a) - dist(b));
+  }
+
   function macFrom(text) {
     const t = String(text || "").trim();
     const hasPrefix = /^\s*MAC\s*(ADDR(ESS)?)?\s*[:#=\-]?/i.test(t);
@@ -275,27 +362,43 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
     const exact = hex.length === body.replace(/[:\-. ]/g, "").length;
     return { mac: hex.match(/../g).join(":"), hasPrefix, exact, letters: /[A-F]/.test(hex) };
   }
-  async function readCodes(file) {
-    await prepZX();
-    const bmp = await loadBitmap(file);
-    const opts = { tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, maxNumberOfSymbols: 12 };
-    const seen = new Map();
-    for (const side of [2400, 1400, 3600]) {
-      let res = [];
-      try { res = await ZXingWASM.readBarcodes(toImageData(bmp, side), opts); } catch {}
-      for (const r of res) if (r.isValid !== false && r.text && !seen.has(r.text)) seen.set(r.text, { text: r.text, format: r.format });
-      if ([...seen.values()].some(c => macFrom(c.text) && !RETAIL.has(c.format))) break;
-    }
-    const codes = [...seen.values()];
+
+  /* What the scanner has learned about this project's MAC barcode, from the one you tapped. */
+  function shapeOf(code) {
+    const t = String(code.text || "");
+    const cls = /^\d+$/.test(t) ? "digits" : /^[0-9A-F:\-. ]+$/i.test(t) ? "hex" : "mixed";
+    const m = t.match(/(?:[0-9A-F]{2}[:\-. ]?){5}[0-9A-F]{2}/i);
+    return { fmt: code.fmt || "", len: t.length, cls, prefix: m ? t.slice(0, m.index).toUpperCase() : "" };
+  }
+  function getProfile() { try { return JSON.parse(ls.get("tvlog.macProfile", "null")); } catch { return null; } }
+  function setProfile(p) { ls.set("tvlog.macProfile", p ? JSON.stringify(p) : "null"); }
+  function matchesProfile(code, p) {
+    if (!p) return false;
+    const s = shapeOf(code);
+    return s.len === p.len && s.cls === p.cls && s.prefix === p.prefix && (!p.fmt || !s.fmt || s.fmt === p.fmt);
+  }
+  function describeProfile(p) {
+    const kind = { digits: "numbers only", hex: "numbers and letters A–F", mixed: "letters and numbers" }[p.cls] || "";
+    return `${p.len}-character barcode (${kind}${p.prefix ? `, starting “${p.prefix}”` : ""})`;
+  }
+
+  function rankCodes(codes) {
+    const p = getProfile();
     const macs = [];
     for (const c of codes) {
-      if (RETAIL.has(c.format)) continue;
       const m = macFrom(c.text); if (!m) continue;
-      const score = (m.hasPrefix ? 4 : 0) + (m.exact ? 2 : 0) + (m.letters ? 1 : 0);
-      if (!macs.some(x => x.mac === m.mac)) macs.push({ mac: m.mac, raw: c.text, score });
+      const learned = matchesProfile(c, p);
+      if (RETAIL.has(c.fmt) && !learned) continue;
+      const score = (learned ? 10 : 0) + (m.hasPrefix ? 4 : 0) + (m.exact ? 2 : 0) + (m.letters ? 1 : 0);
+      if (!macs.some(x => x.mac === m.mac)) macs.push({ mac: m.mac, raw: c.text, score, learned });
     }
     macs.sort((a, b) => b.score - a.score);
-    return { macs, codes, bmp };
+    return macs;
+  }
+  async function readCodes(file) {
+    const bmp = await loadBitmap(file);
+    const codes = await decodeAll(bmp);
+    return { codes, macs: rankCodes(codes), bmp, engine };
   }
 
   /* ---------- Downloads / sharing ---------- */
@@ -521,7 +624,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
         if (scan && scan.busy) body = `<div class="working"><span class="spinner"></span> Reading barcodes…</div>`;
         else if (scan && scan.result) body = macChooser(scan);
         else if (r.mac) body = `<div class="macbig">${esc(r.mac)}</div>`;
-        if (pics.mac) body = `<img class="photo" src="${pics.mac}" alt="MAC label photo, room ${esc(r.number)}">` + body;
+        if (pics.mac && !(scan && scan.result)) body = `<img class="photo" src="${pics.mac}" alt="MAC label photo, room ${esc(r.number)}">` + body;
         const act = has || scan
           ? `<div class="row"><button class="grow" data-shoot="mac">Retake</button><button class="grow" data-editmac>Type MAC</button></div>`
           : `<div class="row"><button class="primary grow" data-shoot="mac">Scan MAC barcode</button><button data-editmac>Type it</button></div>`;
@@ -572,36 +675,55 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
     };
     app.querySelectorAll("[data-shoot]").forEach(b => b.onclick = () => shoot(r, b.dataset.shoot));
     app.querySelectorAll("[data-editmac]").forEach(b => b.onclick = () => openMacEdit(r));
-    app.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => pickMac(r, b.dataset.pick));
+    app.querySelectorAll("[data-pick]").forEach(b => b.onclick = (e) => { e.stopPropagation(); pickCode(r, Number(b.dataset.pick)); });
     const keepMac = $("#keepmac"); if (keepMac) keepMac.onclick = () => confirmMac(r);
+    const shot = $("#shot"); if (shot) shot.onclick = (e) => { const rc = shot.getBoundingClientRect(); tapPhoto(r, (e.clientX - rc.left) / rc.width, (e.clientY - rc.top) / rc.height); };
+    const forget = $("#forget"); if (forget) forget.onclick = () => { setProfile(null); if (view.scan && view.scan.result) view.scan.result.macs = rankCodes(view.scan.result.codes); toast("Forgot the learned barcode"); renderRoom(); };
   }
 
   function macChooser(scan) {
-    const { macs, codes } = scan.result;
-    if (!macs.length) {
-      const others = codes.filter(c => !macs.some(m => m.raw === c.text));
-      return `<div class="banner">No MAC barcode found in that photo. Retake it closer, with the <b>MAC:</b> barcode filling most of the picture, or type the MAC.</div>
-        ${others.length ? `<div class="muted small">Barcodes it did read (tap one if it is the MAC):</div><div class="cands">${others.map(c => `<button class="cand" data-pick="${esc(c.text)}">${esc(c.text)}</button>`).join("")}</div>` : ""}`;
-    }
-    const sel = scan.selected || macs[0].mac;
-    return `<div class="macbig">${esc(sel)}</div>
-      ${macs.length > 1 ? `<div class="muted small">More than one MAC-style barcode on the label. Tap the one printed next to <b>MAC:</b></div>
-        <div class="cands">${macs.map(m => `<button class="cand ${m.mac === sel ? "sel" : ""}" data-pick="${esc(m.mac)}">${esc(m.mac)}${m.raw !== m.mac ? ` <span class="muted">(${esc(m.raw)})</span>` : ""}</button>`).join("")}</div>` : ""}
-      <button class="primary" id="keepmac">Use this MAC</button>`;
+    const { codes } = scan.result;
+    const prof = getProfile();
+    const sel = scan.selected;
+    const boxes = codes.map((c, i) => c.box ? `<button class="hit ${c.text === scan.selRaw ? "sel" : ""} ${macFrom(c.text) ? "" : "notmac"}" data-pick="${i}"
+        style="left:${(c.box.x * 100).toFixed(2)}%;top:${(c.box.y * 100).toFixed(2)}%;width:${(c.box.w * 100).toFixed(2)}%;height:${(c.box.h * 100).toFixed(2)}%"
+        aria-label="Barcode ${esc(c.text)}"></button>` : "").join("");
+    const dot = scan.tap ? `<span class="tapdot" style="left:${(scan.tap.x * 100).toFixed(2)}%;top:${(scan.tap.y * 100).toFixed(2)}%"></span>` : "";
+    let status;
+    if (scan.tapping) status = `<div class="working"><span class="spinner"></span> Reading the barcode you tapped…</div>`;
+    else if (scan.msg) status = `<div class="banner">${scan.msg}</div>`;
+    else if (sel) status = `<div class="macbig">${esc(sel)}</div>
+      <div class="muted small">${scan.pickedBy === "learned" ? "Picked the kind of barcode you taught it." : scan.pickedBy === "tap" ? "The one you tapped. It will look for this kind of barcode next time." : "Not the right one? Tap the MAC barcode on the photo."}</div>`;
+    else status = `<div class="banner">${codes.length ? "None of these barcodes looks like a MAC address." : "No barcodes found yet."} <b>Tap the MAC barcode on the photo</b>, retake it closer, or type the MAC.</div>`;
+    const others = codes.filter(c => !c.box);
+    return `
+      <div class="muted small"><b>Tap the MAC barcode</b> on the photo to choose it.</div>
+      <div class="shot" id="shot"><img src="${scan.url}" alt="MAC label photo">${boxes}${dot}</div>
+      ${others.length ? `<div class="cands">${others.map(c => `<button class="cand ${c.text === scan.selRaw ? "sel" : ""}" data-pick="${codes.indexOf(c)}">${esc(c.text)}</button>`).join("")}</div>` : ""}
+      ${status}
+      ${sel && !scan.tapping ? `<button class="primary" id="keepmac">Use this MAC</button>` : ""}
+      ${prof ? `<div class="learned">Remembers: ${esc(describeProfile(prof))} <button id="forget">Forget</button></div>` : ""}
+      ${scan.result.engine === "backup" ? `<div class="muted small">Using the backup scanner (slower).</div>` : scan.result.engine === "none" ? `<div class="muted small">The scanner couldn't load (no signal?). Type the MAC instead.</div>` : ""}`;
+  }
+  function autoSelect(scan) {
+    const top = scan.result.macs[0];
+    scan.selected = top ? top.mac : null; scan.selRaw = top ? top.raw : null;
+    scan.pickedBy = top && top.learned ? "learned" : "auto"; scan.taught = null; scan.msg = null;
   }
 
   async function shoot(r, key) {
     takePhoto(async (file) => {
       const t = Date.now();
       if (key === "mac") {
-        view.scan = { roomId: r.id, busy: true, file, t };
-        await store.putPhoto(r.id, "mac", await safePhoto(file, caption({ ...r, mac: "" }, "mac", t)));
+        if (view.scan && view.scan.url) URL.revokeObjectURL(view.scan.url);
+        view.scan = { roomId: r.id, busy: true, file, t, url: URL.createObjectURL(file) };
         renderRoom();
+        await store.putPhoto(r.id, "mac", await safePhoto(file, caption({ ...r, mac: "" }, "mac", t)));
         let result;
         try { result = await readCodes(file); }
-        catch (e) { result = { macs: [], codes: [], failed: true }; toast("Scanner didn't load. Type the MAC instead."); }
-        view.scan = { roomId: r.id, busy: false, file, t, result, selected: result.macs[0] && result.macs[0].mac };
-        if (result.bmp) view.scan.bmp = result.bmp;
+        catch (e) { result = { macs: [], codes: [], engine: "none" }; try { result.bmp = await loadBitmap(file); } catch {} }
+        Object.assign(view.scan, { busy: false, result, bmp: result.bmp });
+        autoSelect(view.scan);
         renderRoom();
         return;
       }
@@ -613,15 +735,48 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       toast(`${PHOTO_NAME[key]} saved`);
     });
   }
-  function pickMac(r, value) {
-    const m = macFrom(value);
-    if (view.scan) view.scan.selected = m ? m.mac : value;
-    if (!m && view.scan) { openMacEdit(r, value); return; }
+  function chooseCode(scan, code) {
+    const m = macFrom(code.text);
+    scan.tapping = false;
+    if (!m) {
+      scan.selected = null; scan.selRaw = code.text; scan.taught = null;
+      scan.msg = `That barcode reads <b>${esc(code.text)}</b>, which isn't a MAC address (MACs are 12 characters using 0–9 and A–F). Tap a different barcode.`;
+      return;
+    }
+    scan.selected = m.mac; scan.selRaw = code.text; scan.pickedBy = "tap"; scan.taught = shapeOf(code); scan.msg = null;
+  }
+  function pickCode(r, i) {
+    const s = view.scan; if (!s || !s.result) return;
+    const c = s.result.codes[i]; if (!c) return;
+    s.tap = null; chooseCode(s, c); renderRoom();
+  }
+  async function tapPhoto(r, nx, ny) {
+    const s = view.scan; if (!s || !s.result || s.tapping) return;
+    if (!s.bmp) { s.msg = "The photo couldn't be read. Retake it."; renderRoom(); return; }
+    s.tap = { x: nx, y: ny }; s.tapping = true; s.msg = null; renderRoom();
+    let found = [];
+    try { found = await decodeNear(s.bmp, nx, ny); } catch {}
+    if (view.scan !== s) return;
+    if (!found.length) {
+      s.tapping = false;
+      s.msg = s.result.engine === "none" && !window.ZXing
+        ? "The scanner couldn't load, so it can't read barcodes right now. Type the MAC instead."
+        : "Couldn't read a barcode there. Tap right on the bars, or retake the photo closer and straighter.";
+      renderRoom(); return;
+    }
+    const known = new Set(s.result.codes.map(c => c.text));
+    for (const c of found) if (!known.has(c.text)) s.result.codes.push(c);
+    s.result.macs = rankCodes(s.result.codes);
+    chooseCode(s, found[0]);
     renderRoom();
   }
   async function confirmMac(r) {
-    const s = view.scan; if (!s) return;
+    const s = view.scan; if (!s || !s.selected) return;
+    if (s.taught) { setProfile(s.taught); }
+    const taught = !!s.taught;
+    if (s.url) URL.revokeObjectURL(s.url);
     await setMac(r, s.selected, s);
+    if (taught) toast("Saved. It will pick this kind of barcode automatically from now on.");
   }
   async function setMac(r, mac, scan) {
     r.mac = mac;
