@@ -134,7 +134,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
 (() => {
   "use strict";
 
-  const APP_VERSION = 6;
+  const APP_VERSION = 7;
   /* ---------- Workflow definition ---------- */
   const STEPS = [
     { key: "roomNumber", label: "Room Number", hint: "Photo of the room number sign. This checks you in to the room." },
@@ -490,6 +490,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
   let rooms = [];
   let view = { name: "home" };
   let filter = "";
+  let editingName = false;
   const urls = new Map();
   function doneCount(r) { return STEPS.filter(s => r.steps && r.steps[s.key]).length; }
   function isComplete(r) { return doneCount(r) === STEPS.length; }
@@ -522,11 +523,13 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
         <div><div class="eyebrow">Hotel TV box install</div><h1>Install Log</h1></div>
       </header>
       ${!storageOk ? `<div class="banner"><b>This browser isn't keeping data.</b> Save each room (Save room zip) before closing this page.</div>` : ""}
+      ${tech && !editingName ? `<div class="learned">Installer on this phone: <b>${esc(tech)}</b> <button id="edittech">Change</button></div>` : `
       <div class="panel">
-        <label class="field" for="tech">Your name <span class="muted small" style="font-weight:400">Printed on every photo so the office knows who did the room</span>
-          <input type="text" id="tech" value="${esc(tech)}" placeholder="e.g. Dae" autocomplete="name">
+        <label class="field" for="tech">Your name <span class="muted small" style="font-weight:400">Enter it once. This phone puts it on every room and photo from now on.</span>
+          <input type="text" id="tech" value="${esc(tech)}" placeholder="e.g. Dae" autocomplete="name" enterkeyhint="done">
         </label>
-      </div>
+        <button class="primary" id="savetech">Save name</button>
+      </div>`}
       <button class="primary big" id="newroom">Check in to a room</button>
       <div class="stats">
         <div class="stat"><b>${rooms.length}</b><span>Rooms</span></div>
@@ -561,8 +564,20 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       </div>` : ""}
     `;
     app.insertAdjacentHTML("beforeend", `<div class="ver">Version ${APP_VERSION}${liveOK() ? " · live scanner" : " · photo scanner"}</div>`);
-    $("#tech").addEventListener("change", e => { ls.set("tvlog.tech", e.target.value.trim()); toast("Name saved"); });
-    $("#newroom").onclick = () => startCheckin();
+    const saveName = async () => {
+      const v = ($("#tech") && $("#tech").value.trim()) || "";
+      if (!v) { toast("Type your name first"); return; }
+      ls.set("tvlog.tech", v); editingName = false;
+      for (const r of rooms) if (!r.tech) { r.tech = v; await store.putRoom(r); }
+      await refresh(); renderHome(); toast("Name saved for every room on this phone");
+    };
+    const st = $("#savetech"); if (st) st.onclick = saveName;
+    const ti = $("#tech"); if (ti) ti.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); saveName(); } });
+    const et = $("#edittech"); if (et) et.onclick = () => { editingName = true; renderHome(); const f = $("#tech"); if (f) { f.focus(); f.select(); } };
+    $("#newroom").onclick = () => {
+      if (!ls.get("tvlog.tech", "")) { const f = $("#tech"); if (f) f.focus(); toast("Add your name first. It goes on every photo."); return; }
+      startCheckin();
+    };
     const f = $("#filter"); if (f) f.oninput = e => { filter = e.target.value; const pos = e.target.selectionStart; renderHome(); const nf = $("#filter"); nf.focus(); nf.setSelectionRange(pos, pos); };
     app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { view = { name: "room", id: b.dataset.open }; render(); window.scrollTo(0, 0); });
     const csv = $("#csv"); if (csv) csv.onclick = () => saveFile(`TV Install Report ${stampTime(Date.now()).slice(0, 10)}${tech ? " - " + safeName(tech) : ""}.csv`, new Blob([reportCSV(rooms)], { type: "text/csv" }));
