@@ -1,4 +1,6 @@
+<!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>TV Box Install Log</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -40,8 +42,9 @@
   --done: #4FC08D; --done-soft: #16301F; --flag: #FF6B61; --flag-soft: #3A1917;
 }
 * { box-sizing: border-box; }
-body { background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.4; -webkit-tap-highlight-color: transparent; }
-.wrap { max-width: 560px; margin: 0 auto; padding-inline: 16px; padding-block: 12px 96px; display: flex; flex-direction: column; gap: 16px; }
+html, body { margin: 0; }
+body { -webkit-text-size-adjust: 100%; background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.4; -webkit-tap-highlight-color: transparent; }
+.wrap { max-width: 560px; margin: 0 auto; padding-inline: max(16px, env(safe-area-inset-left, 0px)); padding-block: calc(12px + env(safe-area-inset-top, 0px)) calc(96px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 16px; }
 h1, h2, h3 { font-family: var(--display); margin: 0; letter-spacing: .01em; text-wrap: balance; }
 h1 { font-size: 30px; line-height: 1.05; }
 h2 { font-size: 24px; }
@@ -131,7 +134,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
 (() => {
   "use strict";
 
-  const APP_VERSION = 5;
+  const APP_VERSION = 6;
   /* ---------- Workflow definition ---------- */
   const STEPS = [
     { key: "roomNumber", label: "Room Number", hint: "Photo of the room number sign. This checks you in to the room." },
@@ -773,7 +776,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
     const host = $("#live");
     host.innerHTML = `<div class="live" role="dialog" aria-label="Scan MAC barcode">
       <video id="lv" playsinline muted autoplay></video><canvas id="lc"></canvas>
-      <div class="livetop">Point at the label. <b>Tap the MAC barcode</b> if it isn't green.</div>
+      <div class="livetop">Point at the label, then <b>tap the MAC barcode</b> to save it.</div>
       <div class="livebar">
         <div class="livemsg" id="lmsg">Starting camera…</div>
         <button class="primary big" id="luse" hidden>Use MAC</button>
@@ -825,7 +828,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
       const m = st.sel && macFrom(st.sel);
       useBtn.hidden = !m;
       if (m) useBtn.innerHTML = `Use <span class="livemac">${esc(m.mac)}</span>`;
-      msg.textContent = st.note || (m ? (st.userPicked ? "The one you tapped. It will look for this kind next time." : st.learned ? "Picked the kind of barcode you taught it." : "Green = the MAC. Wrong one? Tap the right barcode.")
+      msg.textContent = st.note || (m ? (st.userPicked ? "Saving…" : st.learned ? "Picked the kind of barcode you taught it." : "Green = the MAC. Tap it (or the button) to save it.")
         : st.codes.size ? "None of these look like a MAC. Tap the MAC barcode, or move closer." : "Looking for barcodes… hold steady, fill the screen with the label.");
     }
     async function tick() {
@@ -857,10 +860,12 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-weight: 600;
         .sort((a, b) => Math.abs(ny - (a.box.y + a.box.h / 2)) - Math.abs(ny - (b.box.y + b.box.h / 2)))[0];
       if (!hit) { st.note = "Tap right on a barcode's box. If there's no box, move closer or steady the phone."; draw(); setTimeout(() => { st.note = ""; }, 2500); return; }
       if (!macFrom(hit.text)) { st.note = `That one reads ${hit.text}, not a MAC address. Tap a different barcode.`; draw(); setTimeout(() => { st.note = ""; }, 3000); return; }
-      st.sel = hit.text; st.userPicked = true; st.taught = shapeOf(hit); st.note = ""; draw();
+      st.userPicked = true; st.taught = shapeOf(hit);
+      st.sel = hit.text; st.note = ""; draw();
+      useBtn.onclick();
     };
     useBtn.onclick = async () => {
-      const m = st.sel && macFrom(st.sel); if (!m) return;
+      const m = st.sel && macFrom(st.sel); if (!m || useBtn.disabled) return;
       useBtn.disabled = true;
       const shot = document.createElement("canvas"); shot.width = video.videoWidth; shot.height = video.videoHeight;
       shot.getContext("2d").drawImage(video, 0, 0);
